@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 from util import JsonDB
+import db
+from db import guild_db
 
 with open("token.txt") as f:
     TOKEN = f.read()
@@ -27,18 +29,18 @@ async def init(ctx):
 
 
 @client.command(name="add")
-async def add_pilgrimage(ctx, id:str, score:int, *, display_name:str=""):
+async def add_pilgrimage(ctx, pid:str, score:int, *, display_name:str=""):
     """Adds a pilgrimage"""
     async with ctx.typing():
-        if not id.isidentifier(): # Ensures that `id` is a valid identifier
+        if not pid.isidentifier(): # Ensures that `id` is a valid identifier
             await ctx.send("ID must contain only alphanumeric characters and underscores, and cannot start with a number!")
             return
 
         # If there was no display name, we will set it to the id
         if not display_name:
-            display_name = id
+            display_name = pid
 
-        JsonDB.add_pilgrimage(ctx.guild, id, score, display_name)
+        JsonDB.add_pilgrimage(ctx.guild, pid, score, display_name)
 
         await ctx.send(f"Pilgrimage **{display_name}** created!\nScore: {score}\nID: `{id}`")
 
@@ -46,15 +48,15 @@ async def add_pilgrimage(ctx, id:str, score:int, *, display_name:str=""):
 
 
 @client.command(name="remove",aliases=["rm", "delete", "del"])
-async def remove_pilgrimage(ctx, id:str):
+async def remove_pilgrimage(ctx, pid:str):
     """Removes an existing pilgrimage"""
     async with ctx.typing():
-        success = JsonDB.remove_pilgrimage(ctx.guild, id)
+        success = JsonDB.remove_pilgrimage(ctx.guild, pid)
         # Success: True/False based on whether it managed to delete the pilgrimage
         if success:
-            await ctx.send(f"Pilgrimage `{id}` was removed!")
+            await ctx.send(f"Pilgrimage `{pid}` was removed!")
         else:
-            await ctx.send(f"No pilrimage with ID `{id}` was found!")
+            await ctx.send(f"No pilrimage with ID `{pid}` was found!")
             
 
 @client.command(name="list")
@@ -79,10 +81,10 @@ async def list_pilgrimages(ctx):
 
 
 @client.command(name="award")
-async def award(ctx, id, *, member: discord.Member):
-    success = JsonDB.add_pilgrimage_to_member(ctx.guild, id, member)
+async def award(ctx, pid, *, member: discord.Member):
+    success = JsonDB.add_pilgrimage_to_member(ctx.guild, pid, member)
     if success == 0:
-        await ctx.send(f"**{member}** has been awarded the {JsonDB.get_pilgrimage_display_name(ctx.guild, id)} pilgrimage")
+        await ctx.send(f"**{member}** has been awarded the {JsonDB.get_pilgrimage_display_name(ctx.guild, pid)} pilgrimage")
     elif success == -1:
         await ctx.send("Nothing changed. The user already has that pilgrimage!")
     elif success == -2:
@@ -90,19 +92,21 @@ async def award(ctx, id, *, member: discord.Member):
 
 
 @client.command(name="revoke")
-async def revoke(ctx, id, *, member: discord.Member):
-    if id == "-all":
+async def revoke(ctx, pid, *, member: discord.Member):
+    if pid == "-all":
         success = JsonDB.remove_all_pilgrimages_from_user(ctx.guild, member)
         if success == 0:
             await ctx.send(f"Revoked all pilgrimages from the user")
         else:
             await ctx.send(f"Nothing changed. The user does not have any pilgrimages.")
     else:
-        success = JsonDB.remove_pilgrimage_from_user(ctx.guild, id, member)
+        success = JsonDB.remove_pilgrimage_from_user(ctx.guild, pid, member)
         if success == 0:
-            await ctx.send(f"User no longer has the `{id}` pilgrimage")
+            await ctx.send(f"User no longer has the `{pid}` pilgrimage")
         else:
             await ctx.send(f"Nothing changed. The user did not have that pilgrimage.")
+
+
 
 
 client.run(TOKEN)
