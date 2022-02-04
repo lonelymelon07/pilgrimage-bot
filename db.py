@@ -42,7 +42,7 @@ class Database(mysql.connector.MySQLConnection):
         )
 
         self.guild_id = guild_id
-        self.mycursor = self.cursor()
+        self.mycursor = self.cursor(buffered=True)  # IDK why buffered needs to be True but it causes fewer errors lol
 
     def add_pilg(self, pid:str, score:int, display_name:str):
         self.mycursor.execute("INSERT INTO pilgrimages (id, display_name, score) VALUES (%s, %s, %s);", (pid, display_name, score))
@@ -64,8 +64,40 @@ class Database(mysql.connector.MySQLConnection):
         self.mycursor.execute("DELETE FROM awards WHERE member_id = %s;", (member.id,))
         self.commit()
 
+    def list_pilgs(self) -> list[tuple]:
+        """
+        Return a list of tuples
+        Tuples will contain (pid, display_name, score)
+        """
+        self.mycursor.execute("SELECT * FROM pilgrimages")
+        return self.mycursor.fetchall()
+
+    def get_member(self, member:discord.Member|discord.User) -> list[tuple]:
+        """
+        Return a list tuples of pilgrimages associated with `member`
+        In form [(id, display_name, score), ...]
+        """
+
+        self.mycursor.execute("SELECT (pilgrimage_id) FROM awards WHERE member_id=%s", (member.id,))
+        pids = self.mycursor.fetchall()
+
+        # Have to create a list to store all results, as cursor.fetch*() clears each time a
+        # new statement is executed
+        results = []
+
+        for i in pids:
+            self.mycursor.execute("SELECT * FROM pilgrimages WHERE id=%s", (i[0],))
+            results.append(self.mycursor.fetchone())
+
+        return results
+
+
+
 def get_db(guild_id:str) -> Database:
     return Database(host=HOST, user=USER, passw=PASSWORD, guild_id=guild_id)
 
 if __name__ == "__main__":
     print("Wrong file dipshit")
+
+    # DEBUG SHIT
+    print(get_db(934435062819209296))
