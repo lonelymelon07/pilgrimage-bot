@@ -49,6 +49,7 @@ class Database(mysql.connector.MySQLConnection):
         self.commit()
 
     def rm_pilg(self, pid:str):
+        self.mycursor.execute("DELETE FROM awards WHERE pilgrimage_id = %s;", (pid,))
         self.mycursor.execute("DELETE FROM pilgrimages WHERE id = %s;", (pid,))
         self.commit()
 
@@ -91,6 +92,24 @@ class Database(mysql.connector.MySQLConnection):
 
         return results
 
+
+    def pilg_exists(self, pid: str) -> bool:
+        pilgs = self.list_pilgs()
+        for i in pilgs:
+            if pid == i[0]:
+                return True
+        return False
+
+
+    def member_has_pilg(self, pid:str, member:discord.Member|discord.User) -> bool:
+        awards = self.get_member(member)
+
+        if len(awards):
+            for i in awards:
+                if pid == i[0]:
+                    return True
+            return False
+        return False
 
 
 def get_db(guild_id:str) -> Database:
