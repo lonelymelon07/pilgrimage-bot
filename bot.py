@@ -1,9 +1,16 @@
 import discord
 from discord.ext import commands
-from util import JsonDB
+import json
 
-with open("token.txt") as f:
-    TOKEN = f.read()
+from errors import *
+from db import get_db
+from converters import idstr, smallint, str127
+
+with open("config.json") as f:
+    g = json.load(f)
+    TOKEN = g["token"]
+    ADMIN_ROLE_ID = g["admin_role"]
+
 
 client = commands.Bot(command_prefix = ";")
 
@@ -13,96 +20,166 @@ async def on_ready():
     print(f"Logged in as {client.user}")
 
 
-@client.command()
-async def init(ctx):
-    """Initialises the Guild's storage of pilgrimages"""
-    async with ctx.typing():
-        if JsonDB.is_guild_init(ctx.guild):
-            await ctx.send("Guild has already been initialised!")
+@client.event
+async def on_command_error(ctx, error):
+    output = ":no_entry_sign:  **Oops! An error occurred.**\n"
+    if isinstance(error, commands.CommandInvokeError):
+        e = error.original
+    
+        if isinstance(e, DatabaseError):
+            output += f"```DataError: {e}```"
         else:
-            JsonDB.init_guild(ctx.guild)
-            await ctx.send("Guild initialised!")
+            output += "```Unknown Error```"
+    elif isinstance(error, commands.UserInputError):
+        output += f"```UserInputError: {error}```"
+    elif isinstance(error, commands.CheckFailure):
+        output += f"```PermissionsFaliure: {error}```"
+    else:
+        output += "```Unknown Error```"
 
-    print(f"{ctx.author} has run command init in #{ctx.channel}")
+    print(f"[Command Raised an Error]: {error}")
 
-
-@client.command(name="add")
-async def add_pilgrimage(ctx, id:str, score:int, *, display_name:str=""):
-    """Adds a pilgrimage"""
-    async with ctx.typing():
-        if not id.isidentifier(): # Ensures that `id` is a valid identifier
-            await ctx.send("ID must contain only alphanumeric characters and underscores, and cannot start with a number!")
-            return
-
-        # If there was no display name, we will set it to the id
-        if not display_name:
-            display_name = id
-
-        JsonDB.add_pilgrimage(ctx.guild, id, score, display_name)
-
-        await ctx.send(f"Pilgrimage **{display_name}** created!\nScore: {score}\nID: `{id}`")
-
-    print(f"{ctx.author} has run command add in #{ctx.channel}")
-
-
-@client.command(name="remove",aliases=["rm", "delete", "del"])
-async def remove_pilgrimage(ctx, id:str):
-    """Removes an existing pilgrimage"""
-    async with ctx.typing():
-        success = JsonDB.remove_pilgrimage(ctx.guild, id)
-        # Success: True/False based on whether it managed to delete the pilgrimage
-        if success:
-            await ctx.send(f"Pilgrimage `{id}` was removed!")
-        else:
-            await ctx.send(f"No pilrimage with ID `{id}` was found!")
+    await ctx.send(output)
             
 
-@client.command(name="list")
+@client.command(name="add", aliases=["new"])
+@commands.has_role(ADMIN_ROLE_ID)
+async def add_pilgrimage(ctx, pid:str, score:int, *, display_name:str=""):
+    """
+    Adds a pilgrimage
+    <pid> (pilgrimage ID) must contain only alphanumberic characters and underscores, cannot start with a number, and cannot be longer than 63 characters
+    <score> any integer where -32728 < x < 32728
+    <display_name> a string no longer than 127 characters. If none defaults to <pid>
+    """
+
+    pid = idstr(pid)
+    score = smallint(score)
+    display_name = str127(display_name)
+
+    # If there was no display name, we will set it to the id
+    if not display_name:
+        display_name = pid
+
+    tdb = get_db(ctx.guild.id)
+
+    if not tdb.pilg_exists(pid):
+        tdb.add_pilg(pid, score, display_name)
+        await ctx.send(f"Pilgrimage **{display_name}** created!\nScore: {score}\nID: `{pid}`")
+    else:
+        raise PilgrimageAlreadyExistsError(f"Pilgrimage {pid} already exists!")
+
+    print(f"{ctx.author} has run command 'add' in #{ctx.channel}")
+
+
+@client.command(name="remove", aliases=["rm", "delete", "del"])
+@commands.has_role(ADMIN_ROLE_ID)
+async def remove_pilgrimage(ctx, pid:str):
+    """
+    Removes an existing pilgrimage
+    <pid> the pilgrimage ID
+    """
+
+    tdb = get_db(ctx.guild.id)
+
+    if tdb.pilg_exists:
+        get_db(ctx.guild.id).rm_pilg(pid)
+        await ctx.send("Deleted the pilgrimage")
+    else:
+        raise PilgrimageNotFoundError(f"Pilgrimage {pid} does not exist!")
+
+    print(f"{ctx.author} has run command 'remove' in #{ctx.channel}")
+        
+
+@client.command(name="list", aliases=["pilgs", "pilgrimages"])
 async def list_pilgrimages(ctx):
     """Lists all pilgrimages"""
-    async with ctx.typing():
-        pilgrimages = JsonDB.get_pilgrimages(ctx.guild)
-        
-        output = ""
-        if len(pilgrimages) >= 1:
-            # k will be the id, v will be a dict of other data
-            for k, v in pilgrimages.items():
-                output += f"\n**{v['display_name']}:**"
-                output += f"\n\tScore: {v['score']}"
-                output += f"\n\tID: `{k}`\n"
-        else:
-            output = "There are no Pilgrimages!"
+    pilgs = get_db(ctx.guild.id).list_pilgs()  # List of tuples in form [(pid, display_name, score), ...]
+    output = ""
+
+    if len(pilgs):
+        for pid, dn, score in pilgs:
+            output += f"{dn}:"
+            output += f"\n\tScore: {score}"
+            output += f"\n\tID: `{pid}`\n"
+    else:
+        output += "There are no pilgrimages!"
 
     await ctx.send(output)
 
-    print(f"{ctx.author} has run command list in #{ctx.channel}")
+    print(f"{ctx.author} has run command 'list' in #{ctx.channel}")
 
 
-@client.command(name="award")
-async def award(ctx, id, *, member: discord.Member):
-    success = JsonDB.add_pilgrimage_to_member(ctx.guild, id, member)
-    if success == 0:
-        await ctx.send(f"**{member}** has been awarded the {JsonDB.get_pilgrimage_display_name(ctx.guild, id)} pilgrimage")
-    elif success == -1:
-        await ctx.send("Nothing changed. The user already has that pilgrimage!")
-    elif success == -2:
-        await ctx.send(f"The Pilgrimage with ID `{id}` does not exist!")
+@client.command(name="award", aliases=["awd"])
+@commands.has_role(ADMIN_ROLE_ID)
+async def award(ctx, pid:str, *, member: discord.Member):
+    """
+    Awards pilgrimage <pid> to <member>
+    """
+    
+    tdb = get_db(ctx.guild.id)
 
-
-@client.command(name="revoke")
-async def revoke(ctx, id, *, member: discord.Member):
-    if id == "-all":
-        success = JsonDB.remove_all_pilgrimages_from_user(ctx.guild, member)
-        if success == 0:
-            await ctx.send(f"Revoked all pilgrimages from the user")
+    if tdb.pilg_exists(pid):
+        if not tdb.member_has_pilg(pid, member):
+            tdb.award(pid, member)
+            await ctx.send(f"Gave the {pid} pilgrimage to {member}!")
         else:
-            await ctx.send(f"Nothing changed. The user does not have any pilgrimages.")
+            raise MemberHasPilgrimageError(f"{member} already has that pilgrimage")
     else:
-        success = JsonDB.remove_pilgrimage_from_user(ctx.guild, id, member)
-        if success == 0:
-            await ctx.send(f"User no longer has the `{id}` pilgrimage")
+        raise PilgrimageNotFoundError(f"Pilgrimage {pid} does not exist!")
+
+    print(f"{ctx.author} has run command 'award' in #{ctx.channel}")
+
+
+@client.command(name="revoke", aliases=["rv"])
+@commands.has_role(ADMIN_ROLE_ID)
+async def revoke(ctx, pid:str, *, member: discord.Member):
+    """
+    Revokes pilgrimage <pid> from <member>
+    '-all' in place of <pid> will revoke all pilgrimages 
+    """
+
+    tdb = get_db(ctx.guild.id) # temp db
+
+    if pid == "-all":
+        if len(tdb.get_member(member)):
+            tdb.revoke_all(member)
+            await ctx.send(f"Revoked every pilgrimage from {member}")
         else:
-            await ctx.send(f"Nothing changed. The user did not have that pilgrimage.")
+            raise MemberHasNotPilgrimageError(f"Nothing changed; {member} has no pilgrimages")
+    else:
+        if tdb.member_has_pilg(pid, member):
+            tdb(ctx.guild.id).revoke(pid, member)
+            await ctx.send("If you're lucky that pilgrimage was revoked.")
+        else:
+            raise MemberHasNotPilgrimageError(f"Nothing changed; {member} does not have pilgrimage {pid}")
+
+    print(f"{ctx.author} has run command 'revoke' in #{ctx.channel}")
+
+
+@client.command(name="user", aliases=["member", "awards"])
+async def user(ctx, *, member:discord.Member=None):
+    """Lists all pilgrimages for a certain user.
+    If [user] is left will default to current user"""
+    if member is None:
+        member = ctx.author
+
+    # A list of pilgs, in form [(pid, display_name, score), ...]
+    pilgs = get_db(ctx.guild.id).get_member(member)
+
+    if len(pilgs) > 0:  # If this user actually has any pilgrimages
+        output = ""
+        total_score = 0
+        for _, dn, score in pilgs:
+            output += f"{dn}: {score}\n"
+            total_score += score
+
+        output += f"\nTotal: {total_score}"
+    else:
+        output = "That user has no pilgrimages."
+
+    await ctx.send(output)
+
+    print(f"{ctx.author} has run command 'user' in #{ctx.channel}")
 
 
 client.run(TOKEN)
